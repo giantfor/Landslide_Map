@@ -1,0 +1,48 @@
+// 1. Batas Wilayah: Ethiopia
+var ethiopia = ee.FeatureCollection('FAO/GAUL/2015/level0')
+                 .filter(ee.Filter.eq('ADM0_NAME', 'Ethiopia'));
+Map.centerObject(ethiopia, 6);
+Map.addLayer(ethiopia.style({color: 'red', fillColor: '00000000'}), {}, 'Ethiopia Boundary');
+
+// 2. Data Elevasi: SRTM DEM
+var dem = ee.Image('USGS/SRTMGL1_003').clip(ethiopia);
+
+// Palet warna biru-hijau-kuning-merah
+var elevationVis = {
+  min: 500,
+  max: 4000,
+  palette: ['blue', 'green', 'yellow', 'red']
+};
+Map.addLayer(dem, elevationVis, 'Elevation (DEM)');
+
+// 3. Data Kemiringan: Slope
+var slope = ee.Terrain.slope(dem).clip(ethiopia);
+var slopeVis = {
+  min: 0,
+  max: 60,
+  palette: ['blue', 'green', 'yellow', 'red']
+};
+Map.addLayer(slope, slopeVis, 'Slope');
+
+// 4. Tambahkan Legenda
+// Membuat panel untuk legenda
+var legend = ui.Panel({style: {position: 'bottom-left'}});
+legend.add(ui.Label({value: 'Legend', style: {fontWeight: 'bold', fontSize: '16px'}}));
+
+// Tambahkan elemen legenda untuk elevasi
+function addLegend(title, palette, min, max) {
+  legend.add(ui.Label(title));
+  var gradient = ui.Thumbnail({
+    image: ee.Image.pixelLonLat().select(0).multiply((max - min) / 256).add(min),
+    params: {bbox: [0, 0, 1, 0.1], dimensions: '100x10', min: min, max: max, palette: palette},
+    style: {stretch: 'horizontal', margin: '0px 8px'}
+  });
+  legend.add(gradient);
+  legend.add(ui.Label(min + ' - ' + max));
+}
+
+addLegend('Elevation (DEM)', elevationVis.palette, elevationVis.min, elevationVis.max);
+addLegend('Slope', slopeVis.palette, slopeVis.min, slopeVis.max);
+
+// Tambahkan panel legenda ke peta
+Map.add(legend);
