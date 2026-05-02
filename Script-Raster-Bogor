@@ -1,0 +1,1023 @@
+// =====================================================
+// LANDSLIDE SUSCEPTIBILITY RASTER STACK
+// BOGOR REGENCY + BOGOR CITY
+// DEM + SLOPE + ASPECT + CHIRPS RAINFALL
+// + SENTINEL-2 NDVI + DYNAMIC WORLD + ESA WORLDCOVER
+// + DYNAMIC ENGLISH LEGEND + OPACITY + EXPORT
+// =====================================================
+
+
+// =====================================================
+// 1. STUDY AREA: BOGOR REGENCY + BOGOR CITY
+// =====================================================
+
+var gaul2 = ee.FeatureCollection('FAO/GAUL/2015/level2');
+
+var jabar = gaul2
+  .filter(ee.Filter.eq('ADM0_NAME', 'Indonesia'))
+  .filter(ee.Filter.eq('ADM1_NAME', 'Jawa Barat'));
+
+print('West Java ADM2 names:', jabar.aggregate_array('ADM2_NAME'));
+
+var bogorRaya = jabar.filter(
+  ee.Filter.or(
+    ee.Filter.eq('ADM2_NAME', 'Bogor'),
+    ee.Filter.eq('ADM2_NAME', 'Kota Bogor'),
+    ee.Filter.eq('ADM2_NAME', 'Bogor Kota'),
+    ee.Filter.eq('ADM2_NAME', 'Bogor City')
+  )
+);
+
+print('Bogor Regency + Bogor City:', bogorRaya);
+
+var roi = bogorRaya.geometry().dissolve();
+
+Map.centerObject(roi, 10);
+
+
+// =====================================================
+// 2. TEMPORAL PARAMETERS
+// =====================================================
+
+// Change this date according to the landslide event date
+// or the representative analysis date.
+var eventDate = '2023-03-15';
+
+var ndviShortWindow = 30;
+var ndviLongWindow = 90;
+var dynamicWorldWindow = 90;
+
+
+// =====================================================
+// 3. VISUALIZATION PALETTES
+// =====================================================
+
+var boundaryVis = {
+  palette: ['FF0000']
+};
+
+var demVis = {
+  min: 0,
+  max: 2500,
+  palette: [
+    '006400', // dark green
+    '7FFF00', // light green
+    'FFFF00', // yellow
+    'A0522D', // brown
+    'FFFFFF'  // white
+  ]
+};
+
+var slopeVis = {
+  min: 0,
+  max: 60,
+  palette: [
+    'FFFFFF', // flat
+    'FFFF00', // gentle
+    'FFA500', // moderate-steep
+    'FF0000'  // steep
+  ]
+};
+
+var aspectVis = {
+  min: 0,
+  max: 360,
+  palette: [
+    '0000FF',
+    '00FFFF',
+    '00FF00',
+    'FFFF00',
+    'FF0000'
+  ]
+};
+
+var rainfall1dVis = {
+  min: 0,
+  max: 100,
+  palette: [
+    'FFFFFF',
+    'ADD8E6',
+    '0000FF',
+    '4B0082'
+  ]
+};
+
+var rainfall3dVis = {
+  min: 0,
+  max: 150,
+  palette: [
+    'FFFFFF',
+    'ADD8E6',
+    '0000FF',
+    '4B0082'
+  ]
+};
+
+var rainfall7dVis = {
+  min: 0,
+  max: 200,
+  palette: [
+    'FFFFFF',
+    'ADD8E6',
+    '0000FF',
+    '4B0082'
+  ]
+};
+
+var rainfall14dVis = {
+  min: 0,
+  max: 350,
+  palette: [
+    'FFFFFF',
+    'ADD8E6',
+    '0000FF',
+    '00008B',
+    '4B0082'
+  ]
+};
+
+var rainfall30dVis = {
+  min: 0,
+  max: 600,
+  palette: [
+    'FFFFFF',
+    'ADD8E6',
+    '0000FF',
+    '00008B',
+    '4B0082'
+  ]
+};
+
+var ndviVis = {
+  min: 0,
+  max: 1,
+  palette: [
+    '8B4513', // low vegetation / bare surface
+    'FFFF00', // moderate vegetation
+    '008000'  // high vegetation
+  ]
+};
+
+var ndviChangeVis = {
+  min: -0.5,
+  max: 0.5,
+  palette: [
+    'FF0000', // vegetation decrease
+    'FFFFFF', // stable
+    '008000'  // vegetation increase
+  ]
+};
+
+var dynamicWorldVis = {
+  min: 0,
+  max: 8,
+  palette: [
+    '419BDF', // 0 water
+    '397D49', // 1 trees
+    '88B053', // 2 grass
+    '7A87C6', // 3 flooded vegetation
+    'E49635', // 4 crops
+    'DFC35A', // 5 shrub and scrub
+    'C4281B', // 6 built
+    'A59B8F', // 7 bare
+    'B39FE1'  // 8 snow and ice
+  ]
+};
+
+var probabilityVis = {
+  min: 0,
+  max: 1,
+  palette: [
+    'FFFFFF',
+    'FFFF00',
+    'FFA500',
+    'FF0000'
+  ]
+};
+
+var esaWorldCoverVis = {
+  min: 10,
+  max: 100,
+  palette: [
+    '006400', // 10 tree cover
+    'ffbb22', // 20 shrubland
+    'ffff4c', // 30 grassland
+    'f096ff', // 40 cropland
+    'fa0000', // 50 built-up
+    'b4b4b4', // 60 bare / sparse vegetation
+    'f0f0f0', // 70 snow and ice
+    '0064c8', // 80 water
+    '0096a0', // 90 wetland
+    '00cf75', // 95 mangroves
+    'fae6a0'  // 100 moss and lichen
+  ]
+};
+
+
+// =====================================================
+// 4. BOUNDARY LAYER
+// =====================================================
+
+var boundary = ee.Image()
+  .byte()
+  .paint({
+    featureCollection: bogorRaya,
+    color: 1,
+    width: 2
+  });
+
+
+// =====================================================
+// 5. DEM, SLOPE, ASPECT
+// =====================================================
+
+var dem = ee.Image('NASA/NASADEM_HGT/001')
+  .select('elevation')
+  .clip(roi)
+  .rename('elevation');
+
+var terrain = ee.Terrain.products(dem);
+
+var slope = terrain
+  .select('slope')
+  .clip(roi)
+  .rename('slope');
+
+var aspect = terrain
+  .select('aspect')
+  .clip(roi)
+  .rename('aspect');
+
+
+// =====================================================
+// 6. CHIRPS RAINFALL ACCUMULATION
+// =====================================================
+
+var chirps = ee.ImageCollection('UCSB-CHG/CHIRPS/DAILY')
+  .filterBounds(roi);
+
+function rainfallAccumulation(endDate, days) {
+  endDate = ee.Date(endDate);
+  var startDate = endDate.advance(-days, 'day');
+
+  return chirps
+    .filterDate(startDate, endDate)
+    .select('precipitation')
+    .sum()
+    .clip(roi)
+    .rename('rain_' + days + 'd');
+}
+
+var rain1d = rainfallAccumulation(eventDate, 1);
+var rain3d = rainfallAccumulation(eventDate, 3);
+var rain7d = rainfallAccumulation(eventDate, 7);
+var rain14d = rainfallAccumulation(eventDate, 14);
+var rain30d = rainfallAccumulation(eventDate, 30);
+
+
+// =====================================================
+// 7. SENTINEL-2 NDVI TEMPORAL
+// =====================================================
+
+var s2 = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+  .filterBounds(roi)
+  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 40));
+
+function maskS2clouds(image) {
+  var scl = image.select('SCL');
+
+  var mask = scl.neq(3)     // cloud shadow
+    .and(scl.neq(8))        // cloud medium probability
+    .and(scl.neq(9))        // cloud high probability
+    .and(scl.neq(10))       // cirrus
+    .and(scl.neq(11));      // snow
+
+  return image.updateMask(mask);
+}
+
+function ndviBeforeDate(endDate, days) {
+  endDate = ee.Date(endDate);
+  var startDate = endDate.advance(-days, 'day');
+
+  var composite = s2
+    .filterDate(startDate, endDate)
+    .map(maskS2clouds)
+    .median()
+    .clip(roi);
+
+  return composite
+    .normalizedDifference(['B8', 'B4'])
+    .rename('ndvi_' + days + 'd');
+}
+
+var ndvi30d = ndviBeforeDate(eventDate, ndviShortWindow);
+var ndvi90d = ndviBeforeDate(eventDate, ndviLongWindow);
+
+var ndviChange = ndvi30d
+  .subtract(ndvi90d)
+  .rename('ndvi_change');
+
+
+// =====================================================
+// 8. DYNAMIC WORLD LULC
+// =====================================================
+
+var dw = ee.ImageCollection('GOOGLE/DYNAMICWORLD/V1')
+  .filterBounds(roi);
+
+function dynamicWorldBeforeDate(endDate, days) {
+  endDate = ee.Date(endDate);
+  var startDate = endDate.advance(-days, 'day');
+
+  var dwPeriod = dw
+    .filterDate(startDate, endDate)
+    .filterBounds(roi);
+
+  var label = dwPeriod
+    .select('label')
+    .mode()
+    .clip(roi)
+    .rename('dynamic_world_lulc');
+
+  var waterProb = dwPeriod
+    .select('water')
+    .mean()
+    .clip(roi)
+    .rename('water_probability');
+
+  var treesProb = dwPeriod
+    .select('trees')
+    .mean()
+    .clip(roi)
+    .rename('trees_probability');
+
+  var grassProb = dwPeriod
+    .select('grass')
+    .mean()
+    .clip(roi)
+    .rename('grass_probability');
+
+  var floodedVegetationProb = dwPeriod
+    .select('flooded_vegetation')
+    .mean()
+    .clip(roi)
+    .rename('flooded_vegetation_probability');
+
+  var cropsProb = dwPeriod
+    .select('crops')
+    .mean()
+    .clip(roi)
+    .rename('crops_probability');
+
+  var shrubProb = dwPeriod
+    .select('shrub_and_scrub')
+    .mean()
+    .clip(roi)
+    .rename('shrub_probability');
+
+  var builtProb = dwPeriod
+    .select('built')
+    .mean()
+    .clip(roi)
+    .rename('built_probability');
+
+  var bareProb = dwPeriod
+    .select('bare')
+    .mean()
+    .clip(roi)
+    .rename('bare_probability');
+
+  var snowIceProb = dwPeriod
+    .select('snow_and_ice')
+    .mean()
+    .clip(roi)
+    .rename('snow_ice_probability');
+
+  return label
+    .addBands(waterProb)
+    .addBands(treesProb)
+    .addBands(grassProb)
+    .addBands(floodedVegetationProb)
+    .addBands(cropsProb)
+    .addBands(shrubProb)
+    .addBands(builtProb)
+    .addBands(bareProb)
+    .addBands(snowIceProb);
+}
+
+var dynamicWorldStack = dynamicWorldBeforeDate(
+  eventDate,
+  dynamicWorldWindow
+);
+
+
+// =====================================================
+// 9. ESA WORLDCOVER 2021
+// =====================================================
+
+var esaWorldCover = ee.ImageCollection('ESA/WorldCover/v200')
+  .first()
+  .select('Map')
+  .clip(roi)
+  .rename('esa_worldcover');
+
+
+// =====================================================
+// 10. FINAL RASTER STACK
+// =====================================================
+
+var predictorStack = dem
+  .addBands(slope)
+  .addBands(aspect)
+  .addBands(rain1d)
+  .addBands(rain3d)
+  .addBands(rain7d)
+  .addBands(rain14d)
+  .addBands(rain30d)
+  .addBands(ndvi30d)
+  .addBands(ndvi90d)
+  .addBands(ndviChange)
+  .addBands(dynamicWorldStack)
+  .addBands(esaWorldCover)
+  .toFloat();
+
+print('Raster Stack - Bogor Regency + Bogor City:', predictorStack);
+print('Band Names:', predictorStack.bandNames());
+
+
+// =====================================================
+// 11. EXPORT RASTER STACK TO GOOGLE DRIVE
+// =====================================================
+
+Export.image.toDrive({
+  image: predictorStack,
+  description: 'bogor_regency_city_predictor_stack',
+  folder: 'GEE_Bogor_Landslide',
+  fileNamePrefix: 'bogor_regency_city_predictor_stack',
+  region: roi,
+  scale: 30,
+  maxPixels: 1e13
+});
+
+
+// =====================================================
+// 12. DYNAMIC LEGEND FUNCTIONS
+// =====================================================
+
+function makeLegendRow(color, name) {
+  var colorBox = ui.Label({
+    style: {
+      backgroundColor: color,
+      padding: '8px',
+      margin: '0 0 4px 0'
+    }
+  });
+
+  var description = ui.Label({
+    value: name,
+    style: {
+      margin: '0 0 4px 6px',
+      fontSize: '12px'
+    }
+  });
+
+  return ui.Panel({
+    widgets: [colorBox, description],
+    layout: ui.Panel.Layout.Flow('horizontal')
+  });
+}
+
+
+function makeColorBar(palette, min, max, title, unit) {
+  var legendPanelLocal = ui.Panel({
+    style: {
+      padding: '8px 0 0 0',
+      backgroundColor: 'white'
+    }
+  });
+
+  legendPanelLocal.add(ui.Label({
+    value: title,
+    style: {
+      fontWeight: 'bold',
+      fontSize: '13px',
+      margin: '0 0 6px 0'
+    }
+  }));
+
+  var lon = ee.Image.pixelLonLat().select('longitude');
+  var gradient = lon.multiply((max - min) / 100.0).add(min);
+
+  var legendImage = gradient.visualize({
+    min: min,
+    max: max,
+    palette: palette
+  });
+
+  var thumbnail = ui.Thumbnail({
+    image: legendImage,
+    params: {
+      bbox: [0, 0, 100, 10],
+      dimensions: '250x14'
+    },
+    style: {
+      stretch: 'horizontal',
+      margin: '0 0 4px 0',
+      maxHeight: '24px'
+    }
+  });
+
+  legendPanelLocal.add(thumbnail);
+
+  var labels = ui.Panel({
+    widgets: [
+      ui.Label(min + ' ' + unit, {
+        fontSize: '11px',
+        margin: '0 8px 0 0'
+      }),
+      ui.Label(((min + max) / 2) + ' ' + unit, {
+        fontSize: '11px',
+        margin: '0 8px 0 8px',
+        textAlign: 'center',
+        stretch: 'horizontal'
+      }),
+      ui.Label(max + ' ' + unit, {
+        fontSize: '11px',
+        margin: '0 0 0 8px'
+      })
+    ],
+    layout: ui.Panel.Layout.Flow('horizontal')
+  });
+
+  legendPanelLocal.add(labels);
+
+  return legendPanelLocal;
+}
+
+
+// =====================================================
+// 13. CONTROL PANEL
+// =====================================================
+
+var controlPanel = ui.Panel({
+  style: {
+    position: 'bottom-left',
+    padding: '10px',
+    width: '330px',
+    backgroundColor: 'white'
+  }
+});
+
+controlPanel.add(ui.Label({
+  value: 'Dynamic Layer & Legend',
+  style: {
+    fontWeight: 'bold',
+    fontSize: '15px',
+    margin: '0 0 8px 0'
+  }
+}));
+
+controlPanel.add(ui.Label({
+  value: 'Select layer to display:',
+  style: {
+    fontWeight: 'bold',
+    fontSize: '12px',
+    margin: '0 0 4px 0'
+  }
+}));
+
+var legendPanel = ui.Panel({
+  style: {
+    margin: '8px 0 0 0',
+    backgroundColor: 'white'
+  }
+});
+
+
+// =====================================================
+// 14. MAP RESET AND LAYER DISPLAY FUNCTION
+// =====================================================
+
+function resetMapWithLayer(image, vis, layerName, opacity) {
+  Map.layers().reset();
+
+  Map.addLayer(
+    image,
+    vis,
+    layerName,
+    true,
+    opacity
+  );
+
+  Map.addLayer(
+    boundary,
+    boundaryVis,
+    'Bogor Regency + Bogor City Boundary',
+    true,
+    1
+  );
+}
+
+
+function addRainfallLegend(vis, title) {
+  legendPanel.add(
+    makeColorBar(
+      vis.palette,
+      vis.min,
+      vis.max,
+      title,
+      'mm'
+    )
+  );
+
+  legendPanel.add(makeLegendRow('#FFFFFF', 'Low rainfall'));
+  legendPanel.add(makeLegendRow('#ADD8E6', 'Moderate rainfall'));
+  legendPanel.add(makeLegendRow('#0000FF', 'High rainfall'));
+
+  if (vis.palette.length === 4) {
+    legendPanel.add(makeLegendRow('#4B0082', 'Very high rainfall'));
+  }
+
+  if (vis.palette.length === 5) {
+    legendPanel.add(makeLegendRow('#00008B', 'Very high rainfall'));
+    legendPanel.add(makeLegendRow('#4B0082', 'Extreme rainfall'));
+  }
+}
+
+
+function addProbabilityLegend(title) {
+  legendPanel.add(
+    makeColorBar(
+      probabilityVis.palette,
+      probabilityVis.min,
+      probabilityVis.max,
+      title,
+      ''
+    )
+  );
+
+  legendPanel.add(makeLegendRow('#FFFFFF', 'Low probability'));
+  legendPanel.add(makeLegendRow('#FFFF00', 'Moderate probability'));
+  legendPanel.add(makeLegendRow('#FFA500', 'High probability'));
+  legendPanel.add(makeLegendRow('#FF0000', 'Very high probability'));
+}
+
+
+// =====================================================
+// 15. UPDATE SELECTED LAYER AND LEGEND
+// =====================================================
+
+function updateLayer(selectedLayer) {
+  legendPanel.clear();
+
+  if (selectedLayer === 'DEM / Elevation') {
+    resetMapWithLayer(
+      dem,
+      demVis,
+      'DEM / Elevation',
+      0.65
+    );
+
+    legendPanel.add(
+      makeColorBar(
+        demVis.palette,
+        demVis.min,
+        demVis.max,
+        'DEM / Elevation',
+        'm'
+      )
+    );
+
+    legendPanel.add(makeLegendRow('#006400', 'Low elevation'));
+    legendPanel.add(makeLegendRow('#7FFF00', 'Low to moderate elevation'));
+    legendPanel.add(makeLegendRow('#FFFF00', 'Hilly area'));
+    legendPanel.add(makeLegendRow('#A0522D', 'Mountainous / high slope area'));
+    legendPanel.add(makeLegendRow('#FFFFFF', 'Very high elevation'));
+  }
+
+
+  if (selectedLayer === 'Slope') {
+    resetMapWithLayer(
+      slope,
+      slopeVis,
+      'Slope',
+      0.60
+    );
+
+    legendPanel.add(
+      makeColorBar(
+        slopeVis.palette,
+        slopeVis.min,
+        slopeVis.max,
+        'Slope',
+        '°'
+      )
+    );
+
+    legendPanel.add(makeLegendRow('#FFFFFF', 'Flat / very gentle slope'));
+    legendPanel.add(makeLegendRow('#FFFF00', 'Gentle slope'));
+    legendPanel.add(makeLegendRow('#FFA500', 'Moderate to steep slope'));
+    legendPanel.add(makeLegendRow('#FF0000', 'Steep to very steep slope'));
+  }
+
+
+  if (selectedLayer === 'Aspect') {
+    resetMapWithLayer(
+      aspect,
+      aspectVis,
+      'Aspect',
+      0.60
+    );
+
+    legendPanel.add(
+      makeColorBar(
+        aspectVis.palette,
+        aspectVis.min,
+        aspectVis.max,
+        'Aspect',
+        '°'
+      )
+    );
+
+    legendPanel.add(makeLegendRow('#0000FF', '0° / North'));
+    legendPanel.add(makeLegendRow('#00FFFF', '90° / East'));
+    legendPanel.add(makeLegendRow('#00FF00', '180° / South'));
+    legendPanel.add(makeLegendRow('#FFFF00', '270° / West'));
+    legendPanel.add(makeLegendRow('#FF0000', '360° / North'));
+  }
+
+
+  if (selectedLayer === 'Rainfall 1 Day') {
+    resetMapWithLayer(
+      rain1d,
+      rainfall1dVis,
+      'Rainfall 1 Day',
+      0.55
+    );
+
+    addRainfallLegend(rainfall1dVis, 'Rainfall 1 Day');
+  }
+
+
+  if (selectedLayer === 'Rainfall 3 Days') {
+    resetMapWithLayer(
+      rain3d,
+      rainfall3dVis,
+      'Rainfall 3 Days',
+      0.55
+    );
+
+    addRainfallLegend(rainfall3dVis, 'Rainfall 3 Days');
+  }
+
+
+  if (selectedLayer === 'Rainfall 7 Days') {
+    resetMapWithLayer(
+      rain7d,
+      rainfall7dVis,
+      'Rainfall 7 Days',
+      0.55
+    );
+
+    addRainfallLegend(rainfall7dVis, 'Rainfall 7 Days');
+  }
+
+
+  if (selectedLayer === 'Rainfall 14 Days') {
+    resetMapWithLayer(
+      rain14d,
+      rainfall14dVis,
+      'Rainfall 14 Days',
+      0.55
+    );
+
+    addRainfallLegend(rainfall14dVis, 'Rainfall 14 Days');
+  }
+
+
+  if (selectedLayer === 'Rainfall 30 Days') {
+    resetMapWithLayer(
+      rain30d,
+      rainfall30dVis,
+      'Rainfall 30 Days',
+      0.55
+    );
+
+    addRainfallLegend(rainfall30dVis, 'Rainfall 30 Days');
+  }
+
+
+  if (selectedLayer === 'NDVI 30 Days') {
+    resetMapWithLayer(
+      ndvi30d,
+      ndviVis,
+      'NDVI 30 Days',
+      0.65
+    );
+
+    legendPanel.add(
+      makeColorBar(
+        ndviVis.palette,
+        ndviVis.min,
+        ndviVis.max,
+        'NDVI 30 Days',
+        ''
+      )
+    );
+
+    legendPanel.add(makeLegendRow('#8B4513', 'Low vegetation / bare surface'));
+    legendPanel.add(makeLegendRow('#FFFF00', 'Moderate vegetation'));
+    legendPanel.add(makeLegendRow('#008000', 'High vegetation'));
+  }
+
+
+  if (selectedLayer === 'NDVI 90 Days') {
+    resetMapWithLayer(
+      ndvi90d,
+      ndviVis,
+      'NDVI 90 Days',
+      0.65
+    );
+
+    legendPanel.add(
+      makeColorBar(
+        ndviVis.palette,
+        ndviVis.min,
+        ndviVis.max,
+        'NDVI 90 Days',
+        ''
+      )
+    );
+
+    legendPanel.add(makeLegendRow('#8B4513', 'Low vegetation / bare surface'));
+    legendPanel.add(makeLegendRow('#FFFF00', 'Moderate vegetation'));
+    legendPanel.add(makeLegendRow('#008000', 'High vegetation'));
+  }
+
+
+  if (selectedLayer === 'NDVI Change') {
+    resetMapWithLayer(
+      ndviChange,
+      ndviChangeVis,
+      'NDVI Change',
+      0.65
+    );
+
+    legendPanel.add(
+      makeColorBar(
+        ndviChangeVis.palette,
+        ndviChangeVis.min,
+        ndviChangeVis.max,
+        'NDVI Change',
+        ''
+      )
+    );
+
+    legendPanel.add(makeLegendRow('#FF0000', 'Vegetation decrease'));
+    legendPanel.add(makeLegendRow('#FFFFFF', 'Relatively stable'));
+    legendPanel.add(makeLegendRow('#008000', 'Vegetation increase'));
+  }
+
+
+  if (selectedLayer === 'Dynamic World LULC') {
+    resetMapWithLayer(
+      dynamicWorldStack.select('dynamic_world_lulc'),
+      dynamicWorldVis,
+      'Dynamic World LULC',
+      0.65
+    );
+
+    legendPanel.add(ui.Label({
+      value: 'Dynamic World LULC',
+      style: {
+        fontWeight: 'bold',
+        fontSize: '13px',
+        margin: '8px 0 6px 0'
+      }
+    }));
+
+    legendPanel.add(makeLegendRow('#419BDF', '0 - Water'));
+    legendPanel.add(makeLegendRow('#397D49', '1 - Trees'));
+    legendPanel.add(makeLegendRow('#88B053', '2 - Grass'));
+    legendPanel.add(makeLegendRow('#7A87C6', '3 - Flooded vegetation'));
+    legendPanel.add(makeLegendRow('#E49635', '4 - Crops'));
+    legendPanel.add(makeLegendRow('#DFC35A', '5 - Shrub and scrub'));
+    legendPanel.add(makeLegendRow('#C4281B', '6 - Built area'));
+    legendPanel.add(makeLegendRow('#A59B8F', '7 - Bare ground'));
+    legendPanel.add(makeLegendRow('#B39FE1', '8 - Snow / Ice'));
+  }
+
+
+  if (selectedLayer === 'Built Probability') {
+    resetMapWithLayer(
+      dynamicWorldStack.select('built_probability'),
+      probabilityVis,
+      'Built Probability',
+      0.55
+    );
+
+    addProbabilityLegend('Built Probability');
+  }
+
+
+  if (selectedLayer === 'Bare Probability') {
+    resetMapWithLayer(
+      dynamicWorldStack.select('bare_probability'),
+      probabilityVis,
+      'Bare Ground Probability',
+      0.55
+    );
+
+    addProbabilityLegend('Bare Ground Probability');
+  }
+
+
+  if (selectedLayer === 'Trees Probability') {
+    resetMapWithLayer(
+      dynamicWorldStack.select('trees_probability'),
+      probabilityVis,
+      'Trees Probability',
+      0.55
+    );
+
+    addProbabilityLegend('Trees Probability');
+  }
+
+
+  if (selectedLayer === 'ESA WorldCover') {
+    resetMapWithLayer(
+      esaWorldCover,
+      esaWorldCoverVis,
+      'ESA WorldCover 2021',
+      0.65
+    );
+
+    legendPanel.add(ui.Label({
+      value: 'ESA WorldCover 2021',
+      style: {
+        fontWeight: 'bold',
+        fontSize: '13px',
+        margin: '8px 0 6px 0'
+      }
+    }));
+
+    legendPanel.add(makeLegendRow('#006400', '10 - Tree cover'));
+    legendPanel.add(makeLegendRow('#ffbb22', '20 - Shrubland'));
+    legendPanel.add(makeLegendRow('#ffff4c', '30 - Grassland'));
+    legendPanel.add(makeLegendRow('#f096ff', '40 - Cropland'));
+    legendPanel.add(makeLegendRow('#fa0000', '50 - Built-up'));
+    legendPanel.add(makeLegendRow('#b4b4b4', '60 - Bare / sparse vegetation'));
+    legendPanel.add(makeLegendRow('#f0f0f0', '70 - Snow and ice'));
+    legendPanel.add(makeLegendRow('#0064c8', '80 - Permanent water bodies'));
+    legendPanel.add(makeLegendRow('#0096a0', '90 - Herbaceous wetland'));
+    legendPanel.add(makeLegendRow('#00cf75', '95 - Mangroves'));
+    legendPanel.add(makeLegendRow('#fae6a0', '100 - Moss and lichen'));
+  }
+}
+
+
+// =====================================================
+// 16. DROPDOWN LAYER SELECTOR
+// =====================================================
+
+var layerSelector = ui.Select({
+  items: [
+    'DEM / Elevation',
+    'Slope',
+    'Aspect',
+    'Rainfall 1 Day',
+    'Rainfall 3 Days',
+    'Rainfall 7 Days',
+    'Rainfall 14 Days',
+    'Rainfall 30 Days',
+    'NDVI 30 Days',
+    'NDVI 90 Days',
+    'NDVI Change',
+    'Dynamic World LULC',
+    'Built Probability',
+    'Bare Probability',
+    'Trees Probability',
+    'ESA WorldCover'
+  ],
+  value: 'DEM / Elevation',
+  placeholder: 'Select layer',
+  onChange: function(value) {
+    updateLayer(value);
+  },
+  style: {
+    stretch: 'horizontal',
+    margin: '0 0 8px 0'
+  }
+});
+
+controlPanel.add(layerSelector);
+controlPanel.add(legendPanel);
+
+Map.add(controlPanel);
+
+
+// =====================================================
+// 17. DEFAULT DISPLAY
+// =====================================================
+
+updateLayer('DEM / Elevation');
