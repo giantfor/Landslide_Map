@@ -13,3 +13,6 @@ All raster variables were clipped to the Bogor Regency and Bogor City ROI and th
 The resulting raster stack was used as the predictor dataset for landslide susceptibility modeling. The landslide inventory data in vector format was not directly merged as a raster predictor band. Instead, it was used as an event label. Raster values from each predictor band were extracted at landslide and non-landslide sample locations to generate the machine learning training dataset. Therefore, the final dataset consists of two main components: a multi-band raster predictor stack for spatial susceptibility mapping and a training table derived from raster value extraction at labeled sample points.
 
 This dataset acquisition strategy integrates both static and dynamic environmental factors. Static factors include elevation, slope, aspect, and reference land cover, while dynamic factors include antecedent rainfall, NDVI temporal variation, and Dynamic World land-cover probabilities. This approach enables the study to move beyond static landslide susceptibility mapping toward a more advanced spatio-temporal landslide susceptibility and domain awareness framework for Bogor Regency and Bogor City.
+
+<img width="1454" height="969" alt="image" src="https://github.com/user-attachments/assets/bba7a7e8-261c-4da4-a25c-31cdcdaa32fa" />
+
